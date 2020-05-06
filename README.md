@@ -8,7 +8,7 @@ unique name which includes the hash of the SQL. If the table already
 exists, it will not be executed again. Tables will eventually expire
 so you do not need to worry about deleting them.
 
-For more details see [example](example) directory.
+For more details see [example](https://github.com/grisha/bq_etl/tree/master/example) directory.
 
 The only dependencies of this package are google-cloud-bigquery and
 google-cloud-storage.
@@ -20,7 +20,7 @@ more than welcome.
 # Installation
 
 ```
-  pip install .
+  pip install bq_etl
 ```
 # Description
 
