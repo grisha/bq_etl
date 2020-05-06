@@ -1,18 +1,30 @@
-'''
-Copyright 2020 Gregory Trubetskoy
+# Copyright 2020 Gregory Trubetskoy
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 
- http://www.apache.org/licenses/LICENSE-2.0
+#  http://www.apache.org/licenses/LICENSE-2.0
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-'''
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""A module to execute BigQuery ETL jobs comprizing of multiple
+interdependent SQL statements with no configuration other than the SQL
+itself. It can infer dependencies, execute the SQL in correct order,
+and optionally extract and download the table data.
+
+Similarly to how compilers compile programs, if any of the steps
+(execution, extract or download) are already completed, they are not
+repeated again. This module does not need any external tools or
+configuration to keep track of its state - it is entirely based on
+what is in BigQuery, GCS or your local filesystem.
+
+"""
+
 import sys
 import os
 import copy
