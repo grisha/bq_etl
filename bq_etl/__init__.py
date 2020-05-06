@@ -31,6 +31,9 @@ from google.cloud import storage
 log = logging.getLogger(__name__)
 
 class ShortLivedTable(object):
+    """A temporary table created by executing an SQL statement.
+
+    """
 
     def __init__(self,
                  project,
@@ -39,6 +42,25 @@ class ShortLivedTable(object):
                  sql,
                  bucket=None,
                  gcs_prefix="_bq_etl"):
+
+
+        """Create a ShortLivedTable instance.
+
+        Parameters
+        ----------
+        project : str
+            BigQuery project id.
+        dataset : str
+            BigQuery dataset id.
+        name_prefix : str
+            Destination table name (without the hash, which is added automatically).
+        sql : str
+            The (standard) SQL template.
+        bucket : str
+            GCS bucket for BigQuery extracts (optional, extracts disabled if unspecified).
+        gcs_prefix : str
+            A prefix for the GCS extract files.
+        """
 
         self.bq_client = bigquery.Client(project=project)
         self.gcs_client = storage.Client(project=project)
@@ -68,15 +90,33 @@ class ShortLivedTable(object):
 
     @property
     def full_name(self):
+        """Full table name in project.dataset.table format.
+        """
+
         return self._full_name()
 
     def dataset_exists(self):
+        """Check whether the desstination dataset exists.
+
+        Returns
+        -------
+            True if the dataset exists.
+        """
+
         try:
             return self.bq_client.get_dataset(self.table_ref.dataset_id) is not None
         except NotFound as e:
             return False
 
     def table_exists(self):
+        """Check whether the desstination table exists.
+
+        Returns
+        -------
+            True if a table matching the table name (with hash)
+            exist.
+        """
+
         try:
             return self.bq_client.get_table(self.table_ref) is not None
         except NotFound as e:
@@ -126,16 +166,56 @@ class ShortLivedTable(object):
         return f"{project}.{dataset}.{table}"
 
     def parents(self):
+        """Return a list of parent tables in this ETL.
+
+        If a table in this ETL refers to another table in the ETL, the
+        other table becomes a "parent". This is used to build an
+        execution graph such that parents are always executed before
+        their children.
+
+        Note that the parents are determined by simply parsing the SQL
+        in a rather crude way, but it should work in most cases. See
+        https://grisha.org/blog/2016/11/14/table-names-from-sql/
+
+        """
+
         tables = [self.qualify_table(t) for t in self._tables_in_sql()]
         return [t for t in tables if t is not None]
 
     def set_expires(self, seconds=60*60*24*14):
+        """Set the table expiration timestamp.
+
+        Parameters
+        ----------
+        seconds : int
+            Expiration will be set to now + seconds. Default is 14 days.
+
+        """
+
         t = self.bq_client.get_table(self.table_ref)
         t.expires = datetime.now() + timedelta(seconds=seconds)
         self.bq_client.update_table(t, ['expires'])
         log.info(f"Table '{self.table_ref.table_id}' expiration set to {t.expires}")
 
     def execute(self, force=False):
+        """Execute SQL to create the table.
+
+        Executes the SQL to create the destination table. The table
+        name will be appended with a short hash of the SQL, thereby
+        making it specific to the SQL statement. If such a table
+        already exists, execuion is skipped, unless the force argument
+        is True.
+
+        Parameters
+        ----------
+        force : bool
+            Run the SQL even if the destination table exists, overwriting it.
+
+        Returns
+        -------
+            True if a query was actually executed, otherwise False.
+        """
+
         if force or not self.table_exists():
             log.info(f"Creating/overwriting table `{self.table_ref.table_id}` (force: {force}).")
             self._execute()
@@ -162,6 +242,14 @@ class ShortLivedTable(object):
 
 
     def extract_exists(self):
+        """Check whether a GCS extract exists.
+
+        Returns
+        -------
+            True if a files matching the table name (with hash)
+            exist. No CRC or any other check is performed.
+        """
+
         if not self.bucket:
             raise Exception("GCS bucket not configured. Pass a bucket argument to constructor.")
         bucket = self.gcs_client.bucket(self.bucket)
@@ -175,6 +263,20 @@ class ShortLivedTable(object):
         return False
 
     def extract(self, force=False):
+        """Download the GCS extract.
+
+        Parameters
+        ----------
+        dest_dir : str
+            Destination directory for the extract files. Note that for
+            large tables multiple files will be created by
+            BigQuery. The directory must already exist.
+
+        Returns
+        -------
+            True if a file was actually downloaded, otherwise False.
+        """
+
         if force or not self.extract_exists():
             log.info(f"Extracting table `{self.table_ref.table_id}` data to GCS (force: {force}).")
             self._extract()
@@ -200,6 +302,20 @@ class ShortLivedTable(object):
 
 
     def download_extract(self, dest_dir):
+        """Download the GCS extract.
+
+        Parameters
+        ----------
+        dest_dir : str
+            Destination directory for the extract files. Note that for
+            large tables multiple files will be created by
+            BigQuery. The directory must already exist.
+
+        Returns
+        -------
+            True if a file was actually downloaded, otherwise False.
+        """
+
         if not self.bucket:
             raise Exception("GCS bucket not configured. Pass a bucket argument to constructor.")
         bucket = self.gcs_client.bucket(self.bucket)
@@ -221,6 +337,42 @@ class ShortLivedTable(object):
 
 
 def executeTemplates(path, project, dataset, bucket=None, params={}):
+    """Evaluate, parameterize and (if necessary) execute SQL templates.
+
+    This function will read all .sql templates in path, and attempt to
+    parameterize them. Since some templates may refer to others, it
+    will establish the correct hierarchy and execution order
+    respecting such depndencies. Circular dependencies or unspecified
+    parameters will raise an error.
+
+    Parameters
+    ----------
+    path : str
+        Directory containing .sql files, one per table to be created.
+    project : str
+        BigQuery project id.
+    dataset : str
+        BigQuery dataset id.
+    bucket : str
+        GCS bucket for BigQuery extracts (optional, extracts disabled if unspecified).
+    params : dict
+        A dictionary of parameters which will be passed to the
+        templates via format(). Do not use strings matching .sql file
+        names (without the .sql extension) as keys since those will be
+        overwritten by ShortLivedTable instances.
+
+    Returns
+    -------
+
+    dict
+        a dictionary of ShortLivedTable objects, one for every .sql
+        file in path. The key is the name of the file without the .sql
+        directory. You can use these instances to create and download
+        extract, as well as to determine the actual BiqQuery table
+        names.
+
+    """
+
 
     graph = {}
     by_full_name = {}
